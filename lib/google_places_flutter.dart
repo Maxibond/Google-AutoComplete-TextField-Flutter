@@ -10,7 +10,7 @@ import 'package:dio/dio.dart';
 import 'package:rxdart/rxdart.dart';
 
 import 'DioErrorHandler.dart';
-import 'dart:math' show sqrt, pow, atan2, sin, cos;
+import 'dart:math' show atan2, cos, pi, pow, sin, sqrt;
 
 class LocationBias {
   final double latitude;
@@ -181,12 +181,12 @@ class _GooglePlaceAutoCompleteTextFieldState
         alPredictions.addAll(subscriptionResponse.predictions!);
 
         // Sort predictions by distance if center coordinates are provided
-        if (widget.centerLat != null && widget.centerLng != null) {
+        if (widget.locationBias != null) {
           alPredictions.sort((a, b) {
-            double distA =
-                _calculateDistance(widget.centerLat!, widget.centerLng!, a);
-            double distB =
-                _calculateDistance(widget.centerLat!, widget.centerLng!, b);
+            double distA = _calculateDistance(widget.locationBias!.latitude,
+                widget.locationBias!.longitude, a);
+            double distB = _calculateDistance(widget.locationBias!.latitude,
+                widget.locationBias!.longitude, b);
             return distA.compareTo(distB);
           });
         }
