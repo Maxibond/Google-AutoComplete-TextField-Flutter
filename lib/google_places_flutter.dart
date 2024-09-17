@@ -179,17 +179,6 @@ class _GooglePlaceAutoCompleteTextFieldState
       if (subscriptionResponse.predictions!.length > 0 &&
           (widget.textEditingController.text.toString().trim()).isNotEmpty) {
         alPredictions.addAll(subscriptionResponse.predictions!);
-
-        // Sort predictions by distance if center coordinates are provided
-        if (widget.locationBias != null) {
-          alPredictions.sort((a, b) {
-            double distA = _calculateDistance(widget.locationBias!.latitude,
-                widget.locationBias!.longitude, a);
-            double distB = _calculateDistance(widget.locationBias!.latitude,
-                widget.locationBias!.longitude, b);
-            return distA.compareTo(distB);
-          });
-        }
       }
 
       this._overlayEntry = null;
@@ -199,30 +188,6 @@ class _GooglePlaceAutoCompleteTextFieldState
       var errorHandler = ErrorHandler.internal().handleError(e);
       _showSnackBar("${errorHandler.message}");
     }
-  }
-
-  // Helper method to calculate distance
-  double _calculateDistance(
-      double centerLat, double centerLng, Prediction prediction) {
-    const double earthRadius = 6371; // in kilometers
-    double lat = double.tryParse(prediction.lat ?? '') ?? 0;
-    double lng = double.tryParse(prediction.lng ?? '') ?? 0;
-
-    double dLat = _degreesToRadians(lat - centerLat);
-    double dLng = _degreesToRadians(lng - centerLng);
-
-    double a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(_degreesToRadians(centerLat)) *
-            cos(_degreesToRadians(lat)) *
-            sin(dLng / 2) *
-            sin(dLng / 2);
-    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
-
-    return earthRadius * c;
-  }
-
-  double _degreesToRadians(double degrees) {
-    return degrees * (pi / 180);
   }
 
   @override
