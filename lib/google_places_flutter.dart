@@ -1,10 +1,8 @@
 library google_places_flutter;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_places_flutter/model/place_details.dart';
-import 'package:google_places_flutter/model/place_type.dart';
 import 'package:google_places_flutter/model/prediction.dart';
 
 import 'package:rxdart/subjects.dart';
@@ -12,12 +10,27 @@ import 'package:dio/dio.dart';
 import 'package:rxdart/rxdart.dart';
 
 import 'DioErrorHandler.dart';
+import 'dart:math' show sqrt, pow, atan2, sin, cos;
+
+class LocationBias {
+  final double latitude;
+  final double longitude;
+  final int radius;
+
+  LocationBias({
+    required this.latitude,
+    required this.longitude,
+    required this.radius,
+  });
+}
 
 class GooglePlaceAutoCompleteTextField extends StatefulWidget {
   InputDecoration inputDecoration;
   ItemClick? itemClick;
   GetPlaceDetailswWithLatLng? getPlaceDetailWithLatLng;
   bool isLatLngRequired = true;
+  LocationBias? locationBias;
+  String? language;
 
   TextStyle textStyle;
   String googleAPIKey;
@@ -30,20 +43,15 @@ class GooglePlaceAutoCompleteTextField extends StatefulWidget {
   BoxDecoration? boxDecoration;
   bool isCrossBtnShown;
   bool showError;
-  double? containerHorizontalPadding;
-  double? containerVerticalPadding;
-  FocusNode? focusNode;
-  PlaceType? placeType;
-  String? language;
 
   GooglePlaceAutoCompleteTextField(
       {required this.textEditingController,
       required this.googleAPIKey,
-      this.debounceTime: 600,
-      this.inputDecoration: const InputDecoration(),
+      this.debounceTime = 600,
+      this.inputDecoration = const InputDecoration(),
       this.itemClick,
       this.isLatLngRequired = true,
-      this.textStyle: const TextStyle(),
+      this.textStyle = const TextStyle(),
       this.countries,
       this.getPlaceDetailWithLatLng,
       this.itemBuilder,
@@ -51,10 +59,8 @@ class GooglePlaceAutoCompleteTextField extends StatefulWidget {
       this.isCrossBtnShown = true,
       this.seperatedBuilder,
       this.showError = true,
-      this.containerHorizontalPadding,
-      this.containerVerticalPadding,
-      this.focusNode,
-      this.placeType,this.language='en'});
+      this.locationBias,
+      this.language});
 
   @override
   _GooglePlaceAutoCompleteTextFieldState createState() =>
@@ -81,9 +87,7 @@ class _GooglePlaceAutoCompleteTextFieldState
     return CompositedTransformTarget(
       link: _layerLink,
       child: Container(
-        padding: EdgeInsets.symmetric(
-            horizontal: widget.containerHorizontalPadding ?? 0,
-            vertical: widget.containerVerticalPadding ?? 0),
+        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         alignment: Alignment.centerLeft,
         decoration: widget.boxDecoration ??
             BoxDecoration(
@@ -99,7 +103,6 @@ class _GooglePlaceAutoCompleteTextFieldState
                 decoration: widget.inputDecoration,
                 style: widget.textStyle,
                 controller: widget.textEditingController,
-                focusNode: widget.focusNode ?? FocusNode(),
                 onChanged: (string) {
                   subject.add(string);
                   if (widget.isCrossBtnShown) {
@@ -121,8 +124,8 @@ class _GooglePlaceAutoCompleteTextFieldState
   }
 
   getLocation(String text) async {
-    String apiURL =
-        "https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$text&key=${widget.googleAPIKey}&language=${widget.language}";
+    String url =
+        "https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$text&key=${widget.googleAPIKey}";
 
     if (widget.countries != null) {
       // in
@@ -131,14 +134,21 @@ class _GooglePlaceAutoCompleteTextFieldState
         String country = widget.countries![i];
 
         if (i == 0) {
-          apiURL = apiURL + "&components=country:$country";
+          url = url + "&components=country:$country";
         } else {
-          apiURL = apiURL + "|" + "country:" + country;
+          url = url + "|" + "country:" + country;
         }
       }
     }
-    if (widget.placeType != null) {
-      apiURL += "&types=${widget.placeType?.apiString}";
+
+    // locationbias=circle:radius@lat,lng
+    if (widget.locationBias != null) {
+      url = url +
+          "&locationbias=circle:${widget.locationBias!.radius}@${widget.locationBias!.latitude},${widget.locationBias!.longitude}";
+    }
+
+    if (widget.language != null) {
+      url = url + "&language=${widget.language}";
     }
 
     if (_cancelToken?.isCancelled == false) {
@@ -146,15 +156,7 @@ class _GooglePlaceAutoCompleteTextFieldState
       _cancelToken = CancelToken();
     }
 
-    print("urlll $apiURL");
     try {
-      String proxyURL = "https://cors-anywhere.herokuapp.com/";
-      String url = kIsWeb ? proxyURL + apiURL : apiURL;
-
-      /// Add the custom header to the options
-      final options = kIsWeb
-          ? Options(headers: {"x-requested-with": "XMLHttpRequest"})
-          : null;
       Response response = await _dio.get(url);
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
@@ -177,15 +179,50 @@ class _GooglePlaceAutoCompleteTextFieldState
       if (subscriptionResponse.predictions!.length > 0 &&
           (widget.textEditingController.text.toString().trim()).isNotEmpty) {
         alPredictions.addAll(subscriptionResponse.predictions!);
+
+        // Sort predictions by distance if center coordinates are provided
+        if (widget.centerLat != null && widget.centerLng != null) {
+          alPredictions.sort((a, b) {
+            double distA =
+                _calculateDistance(widget.centerLat!, widget.centerLng!, a);
+            double distB =
+                _calculateDistance(widget.centerLat!, widget.centerLng!, b);
+            return distA.compareTo(distB);
+          });
+        }
       }
 
       this._overlayEntry = null;
       this._overlayEntry = this._createOverlayEntry();
-      Overlay.of(context)!.insert(this._overlayEntry!);
+      Overlay.of(context).insert(this._overlayEntry!);
     } catch (e) {
       var errorHandler = ErrorHandler.internal().handleError(e);
       _showSnackBar("${errorHandler.message}");
     }
+  }
+
+  // Helper method to calculate distance
+  double _calculateDistance(
+      double centerLat, double centerLng, Prediction prediction) {
+    const double earthRadius = 6371; // in kilometers
+    double lat = double.tryParse(prediction.lat ?? '') ?? 0;
+    double lng = double.tryParse(prediction.lng ?? '') ?? 0;
+
+    double dLat = _degreesToRadians(lat - centerLat);
+    double dLng = _degreesToRadians(lng - centerLng);
+
+    double a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(_degreesToRadians(centerLat)) *
+            cos(_degreesToRadians(lat)) *
+            sin(dLng / 2) *
+            sin(dLng / 2);
+    double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+
+    return earthRadius * c;
+  }
+
+  double _degreesToRadians(double degrees) {
+    return degrees * (pi / 180);
   }
 
   @override
@@ -203,7 +240,7 @@ class _GooglePlaceAutoCompleteTextFieldState
   }
 
   OverlayEntry? _createOverlayEntry() {
-    if (context != null && context.findRenderObject() != null) {
+    if (context.findRenderObject() != null) {
       RenderBox renderBox = context.findRenderObject() as RenderBox;
       var size = renderBox.size;
       var offset = renderBox.localToGlobal(Offset.zero);
@@ -248,15 +285,14 @@ class _GooglePlaceAutoCompleteTextFieldState
                 ),
               ));
     }
+    return null;
   }
 
   removeOverlay() {
     alPredictions.clear();
     this._overlayEntry = this._createOverlayEntry();
-    if (context != null) {
-      Overlay.of(context).insert(this._overlayEntry!);
-      this._overlayEntry!.markNeedsBuild();
-    }
+    Overlay.of(context).insert(this._overlayEntry!);
+    this._overlayEntry!.markNeedsBuild();
   }
 
   Future<Response?> getPlaceDetailsFromPlaceId(Prediction prediction) async {
@@ -264,21 +300,17 @@ class _GooglePlaceAutoCompleteTextFieldState
 
     var url =
         "https://maps.googleapis.com/maps/api/place/details/json?placeid=${prediction.placeId}&key=${widget.googleAPIKey}";
-    try {
-      Response response = await _dio.get(
-        url,
-      );
+    Response response = await Dio().get(
+      url,
+    );
 
-      PlaceDetails placeDetails = PlaceDetails.fromJson(response.data);
+    PlaceDetails placeDetails = PlaceDetails.fromJson(response.data);
 
-      prediction.lat = placeDetails.result!.geometry!.location!.lat.toString();
-      prediction.lng = placeDetails.result!.geometry!.location!.lng.toString();
+    prediction.lat = placeDetails.result!.geometry!.location!.lat.toString();
+    prediction.lng = placeDetails.result!.geometry!.location!.lng.toString();
 
-      widget.getPlaceDetailWithLatLng!(prediction);
-    } catch (e) {
-      var errorHandler = ErrorHandler.internal().handleError(e);
-      _showSnackBar("${errorHandler.message}");
-    }
+    widget.getPlaceDetailWithLatLng!(prediction);
+    return null;
   }
 
   void clearData() {
